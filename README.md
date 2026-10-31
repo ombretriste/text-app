@@ -1,6 +1,6 @@
 # TextCTRL
 
-Versión 0.2.0 · by OmT Finance
+Versión 0.3.0 · by OmT Finance
 
 App web (PWA) con un editor de texto sencillo. Mismo estilo que las demás apps de OmT Finance, en tinta
 añil. Los documentos se guardan en el dispositivo (IndexedDB) y, si conectas una cuenta de CloudCTRL (⋯ → Nube), también en la nube, cifrados. `cloud.js` es una copia del de cloudctrl.
@@ -10,7 +10,7 @@ añil. Los documentos se guardan en el dispositivo (IndexedDB) y, si conectas un
 - Estilos (Normal, Título 1–3), letra, tamaño, negrita, cursiva, subrayado, tachado, color y resaltado.
 - Alineación, listas, citas, enlaces, imágenes, tablas y líneas separadoras.
 - Deshacer y rehacer, buscar y reemplazar, recuento de palabras, autoguardado e impresión.
-- **Guardar como:** PDF, Word (.docx), HTML, Markdown y texto.
+- **Guardar como:** PDF, Word (.docx), HTML, Markdown y texto, en este dispositivo o como archivo en la nube (CloudCTRL). Cada documento tiene un archivo por formato: exportar otra vez lo actualiza.
 - **Abrir:** Word (.docx), texto, Markdown y HTML.
 
 ## Cómo funciona

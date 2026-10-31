@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca el contenido de los documentos.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -740,7 +740,7 @@ async function exportBlob(fmt) {
   const title = docName(current);
   if (fmt === 'pdf') {
     const { blob, lost } = await toPdf(html, title);
-    if (lost) toast('Algunos caracteres (emojis, griego…) no caben en PDF y salen como «?»', { warn: true });
+    blob.lost = lost;
     return blob;
   }
   if (fmt === 'docx') return toDocx(html, title);
@@ -765,30 +765,85 @@ async function deliver(blob, name) {
   toast(`Guardado: ${name}`);
 }
 
+// En la nube, cada documento tiene un archivo por formato: exportar otra vez lo actualiza
+async function exportToCloud(blob, f, name) {
+  const id = `exp-${current.id.replace(/-/g, '').slice(0, 36)}-${f.id}`;
+  const bytes = await blob.arrayBuffer();
+  const put = (baseRev) => Cloud.put({
+    id, kind: 'file', name, mime: blob.type.split(';')[0], upd: Date.now(), bytes, baseRev,
+    onProgress: (p) => toast(`Subiendo ${name}… ${Math.round(p * 100)} %`, { stay: true }),
+  });
+  toast(`Subiendo ${name}…`, { stay: true });
+  const { files } = await Cloud.list();
+  try {
+    await put(files.find((x) => x.id === id)?.rev || 0);
+  } catch (err) {
+    if (err.status !== 409) throw err;
+    await put(err.rev); // otro dispositivo lo exportó entre tanto
+  }
+}
+
+const PDF_LOST = 'Algunos caracteres (emojis, griego…) no caben en PDF y salen como «?»';
+let exportDest = 'device';
+
 function openExportSheet() {
+  if (exportDest === 'cloud' && !Cloud.account) exportDest = 'device';
   const back = newSheet();
-  back.innerHTML = `
-    <div class="sheet" role="dialog" aria-modal="true" aria-label="Guardar como">
-      <h2 class="sheet-title">Guardar como</h2>
-      <p class="small muted">«${esc(fileBase())}»</p>
-      <div class="fmt-list">
-        ${FORMATS.map((f) => `<button class="fmt" type="button" data-fmt="${f.id}"><b>${f.label}</b><span>${f.text}</span></button>`).join('')}
-      </div>
-      <div class="sheet-actions"><button class="ghost-btn" type="button" data-close>Cerrar</button></div>
-    </div>`;
-  back.querySelector('[data-close]').addEventListener('click', closeSheet);
-  back.querySelectorAll('[data-fmt]').forEach((b) => b.addEventListener('click', async () => {
-    const f = FORMATS.find((x) => x.id === b.dataset.fmt);
-    track(`/guardar/${f.id}`);
-    await flushSave();
-    try {
-      const blob = await exportBlob(f.id);
+  const draw = () => {
+    back.innerHTML = `
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="Guardar como">
+        <h2 class="sheet-title">Guardar como</h2>
+        <p class="small muted">«${esc(fileBase())}»</p>
+        <div class="seg" role="group" aria-label="Dónde guardar">
+          ${[['device', 'Este dispositivo'], ['cloud', 'Nube']].map(([v, l]) =>
+            `<button type="button" data-dest="${v}" class="${exportDest === v ? 'on' : ''}" aria-pressed="${exportDest === v}">${l}</button>`).join('')}
+        </div>
+        ${exportDest === 'cloud' ? '<p class="small muted">Se guarda como archivo en CloudCTRL, cifrado. Si vuelves a exportar en el mismo formato, se actualiza.</p>' : ''}
+        <div class="fmt-list">
+          ${FORMATS.map((f) => `<button class="fmt" type="button" data-fmt="${f.id}"><b>${f.label}</b><span>${f.text}</span></button>`).join('')}
+        </div>
+        <div class="sheet-actions"><button class="ghost-btn" type="button" data-close>Cerrar</button></div>
+      </div>`;
+    back.querySelector('[data-close]').addEventListener('click', closeSheet);
+    back.querySelectorAll('[data-dest]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.dest === 'cloud' && !Cloud.account) { connectForExport(); return; }
+      exportDest = b.dataset.dest;
+      draw();
+    }));
+    back.querySelectorAll('[data-fmt]').forEach((b) => b.addEventListener('click', () => {
+      back.querySelectorAll('button').forEach((x) => { x.disabled = true; });
+      runExport(FORMATS.find((x) => x.id === b.dataset.fmt)).catch(() => {}).finally(draw);
+    }));
+  };
+  draw();
+}
+
+function connectForExport() {
+  Cloud.accountSheet(newSheet(true), {
+    title: 'documentos', close: closeSheet, adapter: cloudAdapter, esc,
+    onChange: () => { exportDest = 'cloud'; openExportSheet(); },
+  });
+}
+
+async function runExport(f) {
+  const cloud = exportDest === 'cloud';
+  track(`/guardar/${cloud ? 'nube/' : ''}${f.id}`);
+  await flushSave();
+  const name = `${fileBase()}.${f.ext}`;
+  try {
+    const blob = await exportBlob(f.id);
+    if (cloud) {
+      await exportToCloud(blob, f, name);
       closeSheet();
-      await deliver(blob, `${fileBase()}.${f.ext}`);
-    } catch (_) {
-      toast('No se ha podido generar el archivo', { warn: true });
+      toast(`Guardado en tu nube: ${name}`);
+    } else {
+      closeSheet();
+      await deliver(blob, name);
     }
-  }));
+    if (blob.lost) toast(PDF_LOST, { warn: true });
+  } catch (err) {
+    toast(cloud ? Cloud.errorText(err) : 'No se ha podido generar el archivo', { warn: true });
+  }
 }
 
 function printDoc() {

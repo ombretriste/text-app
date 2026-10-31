@@ -1,5 +1,5 @@
 // Cambia la versión al modificar archivos para que los móviles descarguen la nueva versión
-const CACHE = 'text-v2';
+const CACHE = 'text-v3';
 const ASSETS = [
   './',
   'index.html',
