@@ -1,7 +1,7 @@
 'use strict';
 
 // Versión de la app (se ve en la pantalla de inicio). Arreglos y ajustes: 0.1.x; novedades: 0.x.0.
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 // Uso de la app en Vercel Analytics: es una sola página, así que cada función se cuenta como una
 // página virtual. Solo se envía el nombre de la función, nunca el contenido de los documentos.
 const track = (path) => { try { window.va?.('pageview', { path }); } catch (_) { /* sin analítica */ } };
@@ -9,6 +9,7 @@ const trackLabel = (label) => track(`/${label.normalize('NFD').replace(/[̀-ͯ]/
 const DISPLAY_KEY = 'text:display';
 const INSTALL_HINT_KEY = 'text:installHint';
 const SAVE_DELAY_MS = 500;
+const CLOUD_DELAY_MS = 5000;
 const IMAGE_MAX_PX = 1600;
 
 const ICONS = {
@@ -28,6 +29,7 @@ const ICONS = {
   clear: '<path d="M6 5.5h12M12 5.5l-3 13M7 18.5h5"/><path d="M15 14l5 5M20 14l-5 5"/>',
   doc: '<path d="M7 3.5h7l4.5 4.5v12.5H7a1.5 1.5 0 0 1-1.5-1.5V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  cloud: '<path d="M7 18.5h9.5a4 4 0 0 0 .8-7.9 5.8 5.8 0 0 0-11.1-1.5A4.8 4.8 0 0 0 7 18.5z"/>',
   open: '<path d="M3.5 18V7a1.5 1.5 0 0 1 1.5-1.5h4l2 2.5h6.5A1.5 1.5 0 0 1 19 9.5V11"/><path d="M3.5 18l2.5-7h15l-2.5 7.5h-14z"/>',
   print: '<path d="M7 8.5v-5h10v5"/><rect x="3.5" y="8.5" width="17" height="8" rx="2"/><path d="M7 14h10v6.5H7z"/>',
   search: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
@@ -104,6 +106,45 @@ const deleteDoc = (id) => store('readwrite', (s) => s.delete(id));
 const htmlText = (html) => new DOMParser().parseFromString(html.replace(/<\/(p|h[1-3]|li|td|th|blockquote)>|<br>/g, ' $&'), 'text/html').body.textContent.replace(/\s+/g, ' ').trim();
 const docName = (doc) => doc.title.trim() || htmlText(doc.html).slice(0, 60) || 'Sin título';
 
+// ---------- Nube (CloudCTRL): opcional; el cliente está en cloud.js ----------
+
+const cloudAdapter = {
+  kind: 'text',
+  list: async () => (await allDocs()).map((d) => ({ id: d.id, upd: d.upd })),
+  read: async (id) => {
+    const d = await getDoc(id);
+    return { name: docName(d), payload: { title: d.title, html: d.html, created: d.created } };
+  },
+  write: (id, name, p, upd) => putDoc({ id, title: p.title, html: p.html, created: p.created, upd }),
+  remove: deleteDoc,
+  fork: async (id) => {
+    const d = await getDoc(id);
+    await putDoc({ ...d, id: newId(), title: `${docName(d)} (otra versión)`, upd: Date.now() });
+  },
+  busy: (id) => current?.id === id,
+  done: (s) => {
+    if (s.forked) toast('Había dos versiones de un documento: se han guardado las dos', { warn: true });
+    if (s.tooLarge) toast('Un documento es demasiado grande para la nube', { warn: true });
+    if (current) return;
+    if (s.down || s.removed || s.forked) renderHome();
+    else updateCloudNote();
+  },
+};
+function cloudNoteText() {
+  if (!Cloud.account) return 'Tus documentos se guardan solo en este dispositivo.';
+  if (Cloud.status.state === 'error') return `${Cloud.status.error} Tus documentos siguen en este dispositivo.`;
+  return 'Tus documentos se guardan aquí y en tu nube, cifrados.';
+}
+function updateCloudNote() {
+  if ($('cloud-note')) $('cloud-note').textContent = cloudNoteText();
+}
+function openCloudSheet() {
+  Cloud.accountSheet(newSheet(true), {
+    title: 'documentos', close: closeSheet, adapter: cloudAdapter, esc,
+    onChange: () => { if (!current) renderHome(); },
+  });
+}
+
 // ---------- Lista de documentos ----------
 
 const view = $('view');
@@ -129,7 +170,7 @@ async function renderHome() {
     </div>
     ${docs.length > 5 ? `<input class="search" id="search" type="search" placeholder="Buscar documentos" aria-label="Buscar documentos" value="${esc(filter)}" />` : ''}
     <section class="doc-list" id="doc-list"></section>
-    <p class="home-note">Tus documentos se guardan solo en este dispositivo.</p>`;
+    <p class="home-note" id="cloud-note">${cloudNoteText()}</p>`;
   $('new-doc').addEventListener('click', () => { track('/nuevo'); createDoc(); });
   $('open-file').addEventListener('click', () => $('file-open').click());
   const draw = () => {
@@ -173,7 +214,7 @@ function confirmDelete(doc) {
   back.innerHTML = `
     <div class="sheet" role="dialog" aria-modal="true" aria-label="Eliminar documento">
       <h2 class="sheet-title">¿Eliminar «${esc(docName(doc))}»?</h2>
-      <p class="small muted">No se puede deshacer.</p>
+      <p class="small muted">${Cloud.account ? 'Se quita de todos tus dispositivos. Podrás recuperarlo durante 30 días desde la papelera de CloudCTRL.' : 'No se puede deshacer.'}</p>
       <div class="sheet-actions">
         <button class="ghost-btn" type="button" data-close>Cancelar</button>
         <button class="danger-btn" type="button" id="del-ok">Eliminar</button>
@@ -182,8 +223,10 @@ function confirmDelete(doc) {
   back.querySelector('[data-close]').addEventListener('click', closeSheet);
   back.querySelector('#del-ok').addEventListener('click', async () => {
     await deleteDoc(doc.id);
+    Cloud.forget('text', doc.id);
     closeSheet();
     renderHome();
+    Cloud.schedule(cloudAdapter, 0);
   });
 }
 
@@ -293,12 +336,17 @@ async function flushSave() {
   if (!current || !ed) return;
   ed.querySelector('img.sel')?.classList.remove('sel');
   selectedImg = null;
+  if (current.html === ed.innerHTML && current.title === $('doc-title').value) {
+    if ($('state')) $('state').textContent = 'Guardado';
+    return;
+  }
   current.html = ed.innerHTML;
   current.title = $('doc-title').value;
   current.upd = Date.now();
   try {
     await putDoc(current);
     if ($('state')) $('state').textContent = 'Guardado';
+    Cloud.schedule(cloudAdapter, CLOUD_DELAY_MS);
   } catch (_) {
     if ($('state')) $('state').textContent = 'Sin guardar';
     toast('No se ha podido guardar: quizá no queda espacio en el dispositivo', { warn: true });
@@ -774,6 +822,7 @@ const EDIT_MENU = [
   { label: 'Imprimir', icon: 'print', run: () => printDoc() },
 ];
 const COMMON_MENU = [
+  { label: 'Nube', icon: 'cloud', run: () => openCloudSheet() },
   { label: 'Opciones de visualización', icon: 'palette', run: () => openDisplaySheet() },
   { label: 'Información', icon: 'info', run: () => openInfoSheet() },
 ];
@@ -808,10 +857,13 @@ document.addEventListener('click', (e) => {
 });
 window.addEventListener('resize', () => { closeMenu(); closePop(); });
 
-$('back-btn').addEventListener('click', async () => { await flushSave(); renderHome(); });
+$('back-btn').addEventListener('click', async () => { await flushSave(); await renderHome(); Cloud.schedule(cloudAdapter, 0); });
 $('save-btn').addEventListener('click', () => openExportSheet());
 $('doc-title').addEventListener('input', markDirty);
-document.addEventListener('visibilitychange', () => { if (document.hidden && saveTimer) flushSave(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && saveTimer) flushSave();
+  Cloud.schedule(cloudAdapter, document.hidden ? 0 : 300);
+});
 window.addEventListener('pagehide', () => { if (saveTimer) flushSave(); });
 
 // Con el teclado abierto, iOS desplaza la parte visible: las barras la siguen
@@ -829,7 +881,7 @@ function openInfoSheet() {
       <h2 class="sheet-title">TextCTRL</h2>
       <p class="small muted">Versión ${APP_VERSION} · by OmT Finance</p>
       <p class="small">Editor de texto sencillo. Da formato, añade imágenes, tablas y enlaces, y guarda en PDF, Word, HTML, Markdown o texto. También abre archivos de Word, texto, Markdown y HTML.</p>
-      <p class="small muted">Los documentos se guardan solo en este dispositivo y no salen de él. Si borras los datos del navegador, se borran también: guarda una copia de lo importante.</p>
+      <p class="small muted">${Cloud.account ? 'Los documentos se guardan en este dispositivo y en tu nube de CloudCTRL, cifrados.' : 'Los documentos se guardan solo en este dispositivo. Si borras los datos del navegador, se borran también: guarda una copia de lo importante, o conéctate a CloudCTRL desde ⋯ → Nube.'}</p>
       <div class="sheet-actions"><button type="button" class="done-btn" data-close>Cerrar</button></div>
     </div>`;
   back.querySelector('[data-close]').addEventListener('click', closeSheet);
@@ -985,4 +1037,8 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 applyDisplay();
-renderHome();
+renderHome().then(async () => {
+  await Cloud.sync(cloudAdapter);
+  const wanted = new URLSearchParams(location.search).get('open'); // enlace desde CloudCTRL
+  if (wanted) openDoc(await getDoc(wanted));
+});
