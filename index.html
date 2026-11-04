@@ -15,15 +15,7 @@
   <meta name="apple-mobile-web-app-title" content="TextCTRL" />
   <meta name="color-scheme" content="dark light" />
   <link rel="stylesheet" href="styles.css" />
-  <script>
-    // Aplica tema y fondo antes de pintar (evita un destello del tema equivocado)
-    try {
-      var d = JSON.parse(localStorage.getItem('text:display') || '{}');
-      var light = d.theme === 'light' || (d.theme !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
-      document.documentElement.dataset.theme = light ? 'light' : 'dark';
-      document.documentElement.dataset.wall = d.wall || 'tinta';
-    } catch (e) {}
-  </script>
+  <script src="boot.js"></script>
 </head>
 <body class="booting">
   <!-- Pantalla de inicio -->
@@ -64,11 +56,6 @@
   <input id="file-open" type="file" accept=".docx,.txt,.md,.markdown,.html,.htm" hidden />
   <input id="file-image" type="file" accept="image/*" hidden />
 
-  <!-- Vercel Web Analytics: sin cookies; solo visitas y las funciones que se abren, nunca el contenido. -->
-  <script>
-    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
-    window.va('beforeSend', function (e) { return Object.assign({}, e, { url: e.url.split(/[?#]/)[0] }); });
-  </script>
   <script defer src="/_vercel/insights/script.js"></script>
   <script src="formats.js"></script>
   <script src="cloud.js"></script>
